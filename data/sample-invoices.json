@@ -1,0 +1,22 @@
+[
+  {
+    "id": "Amazon__INV-0012",
+    "vendor": "Amazon",
+    "invoice_number": "INV-0012",
+    "invoice_date": "2025-08-20",
+    "due_date": "2025-09-05",
+    "total": 2450.0,
+    "currency": "USD",
+    "line_items": []
+  },
+  {
+    "id": "Microsoft__INV-0043",
+    "vendor": "Microsoft",
+    "invoice_number": "INV-0043",
+    "invoice_date": "2025-08-25",
+    "due_date": "2025-09-10",
+    "total": 3100.0,
+    "currency": "USD",
+    "line_items": []
+  }
+]
