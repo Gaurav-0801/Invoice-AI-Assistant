@@ -23,6 +23,7 @@ export type Invoice = {
     contentType?: string
     kind: "image" | "pdf" | "text"
   }
+  previewUrl?: string
 }
 
 export type ParseResult = { ok: true; invoice: Invoice } | { ok: false; error: string }

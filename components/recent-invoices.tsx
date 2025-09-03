@@ -7,6 +7,7 @@ import type { Invoice } from "@/types/invoice"
 import { cn } from "@/lib/utils"
 import { FileText, Calendar, DollarSign } from "lucide-react"
 import { formatDateUS } from "@/lib/date" // import deterministic formatter
+import { Button } from "@/components/ui/button"
 
 type Props = {
   invoices: Invoice[]
@@ -16,6 +17,15 @@ type Props = {
 function formatCurrency(n: number | null | undefined) {
   const val = Number(n ?? 0)
   return `$${val.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function displayVendorName(v?: string) {
+  if (!v) return "Unknown"
+  const s = v.trim().replace(/^[\s.,\-:;]+/, "")
+  return s
+    .split(" ")
+    .map((w) => (w.length ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(" ")
 }
 
 export default function RecentInvoices({ invoices, className }: Props) {
@@ -45,7 +55,7 @@ export default function RecentInvoices({ invoices, className }: Props) {
                       <FileText className="h-5 w-5" aria-hidden />
                     </div>
                     <div>
-                      <div className="text-base font-semibold leading-tight">{inv.vendor}</div>
+                      <div className="text-base font-semibold leading-tight">{displayVendorName(inv.vendor)}</div>
                       <div className="text-xs text-muted-foreground leading-tight">{inv.invoice_number}</div>
                       <div className="mt-3 flex items-center gap-6 text-sm text-muted-foreground">
                         <span className="inline-flex items-center gap-1.5">
@@ -66,7 +76,23 @@ export default function RecentInvoices({ invoices, className }: Props) {
                       pending
                     </Badge>
                     <div className="text-2xl font-bold tabular-nums">{formatCurrency(inv.total)}</div>
-                    <div className="text-sm text-muted-foreground">{formatDateUS(inv.due_date)}</div> {/* */}
+                    <div className="text-sm text-muted-foreground">{formatDateUS(inv.due_date)}</div>
+                    {inv.previewUrl ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const w = window.open()
+                          if (w)
+                            w.document.write(
+                              `<iframe src="${inv.previewUrl}" style="width:100%;height:100%;border:0"></iframe>`,
+                            )
+                        }}
+                        className="mt-1"
+                      >
+                        Preview
+                      </Button>
+                    ) : null}
                   </div>
                 </div>
               </div>

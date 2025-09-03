@@ -4,7 +4,7 @@
 import { type NextRequest, NextResponse } from "next/server"
 import type { Invoice, ParseResult } from "@/types/invoice"
 import { upsertInvoice } from "@/lib/store"
-import { parseInvoiceText } from "@/lib/parser"
+import { parseInvoiceFromImageDataUrl, parseInvoiceFromText } from "@/lib/openai"
 
 async function pdfToText(buffer: ArrayBuffer): Promise<string> {
   const pdfjs = await import("pdfjs-dist")
@@ -25,47 +25,30 @@ async function pdfToText(buffer: ArrayBuffer): Promise<string> {
   return text
 }
 
-function detectKind(
-  filename: string | undefined,
-  contentType: string | undefined,
-  head: Uint8Array,
-): "pdf" | "image" | "unknown" {
-  const ct = (contentType || "").toLowerCase()
-  const name = (filename || "").toLowerCase()
-  if (ct.includes("pdf")) return "pdf"
-  if (ct.startsWith("image/")) return "image"
-  if (head.length >= 4) {
-    if (head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46) return "pdf" // %PDF
-    if (head[0] === 0xff && head[1] === 0xd8) return "image" // JPEG
-    if (head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47) return "image" // PNG
-  }
-  if (name.endsWith(".pdf")) return "pdf"
-  if (name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image"
-  return "unknown"
-}
-
 export async function POST(req: NextRequest) {
   try {
     const form = await req.formData()
+    const previewDataUrl = form.get("previewDataUrl")?.toString()
 
-    // Allow direct text ingestion (from client-side OCR)
+    // Allow direct text ingestion (from client OCR) - keep as supported path.
     const textField = form.get("text")
     const filenameField = form.get("filename")?.toString()
-
     if (typeof textField === "string" && textField.trim().length > 0) {
-      const parsed = parseInvoiceText(textField)
+      // Use LLM structuring for provided text
+      const parsed = await parseInvoiceFromText(textField)
       const invoice: Invoice = {
         id: `${parsed.vendor || "unknown"}__${parsed.invoice_number || Date.now()}`,
         vendor: parsed.vendor || "Unknown",
         invoice_number: parsed.invoice_number || "",
-        invoice_date: parsed.invoice_date ? parsed.invoice_date.slice(0, 10) : "",
-        due_date: parsed.due_date ? parsed.due_date.slice(0, 10) : "",
+        invoice_date: parsed.invoice_date || "",
+        due_date: parsed.due_date || "",
         total: Number(parsed.total ?? 0),
-        subtotal: null,
-        tax: null,
-        currency: "USD",
-        line_items: [],
+        subtotal: parsed.subtotal ?? null,
+        tax: parsed.tax ?? null,
+        currency: parsed.currency || "USD",
+        line_items: Array.isArray(parsed.line_items) ? parsed.line_items : [],
         source: { filename: filenameField, contentType: "text/plain", kind: "text" },
+        previewUrl: previewDataUrl,
       }
       upsertInvoice(invoice)
       return NextResponse.json<ParseResult>({ ok: true, invoice })
@@ -79,43 +62,58 @@ export async function POST(req: NextRequest) {
     const arrayBuffer = await file.arrayBuffer()
     const contentType = file.type || ""
     const head = new Uint8Array(arrayBuffer.slice(0, 8))
-    const kind = detectKind(file.name, contentType, head)
 
-    if (kind === "pdf") {
+    const ct = (contentType || "").toLowerCase()
+    const isPdf =
+      ct.includes("pdf") ||
+      (head.length >= 4 && head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46) ||
+      file.name.toLowerCase().endsWith(".pdf")
+
+    if (isPdf) {
       const text = await pdfToText(arrayBuffer)
       if (!text.trim()) {
         return NextResponse.json<ParseResult>({ ok: false, error: "Could not extract text from PDF." }, { status: 400 })
       }
-      const parsed = parseInvoiceText(text)
+      const parsed = await parseInvoiceFromText(text)
       const invoice: Invoice = {
         id: `${parsed.vendor || "unknown"}__${parsed.invoice_number || Date.now()}`,
         vendor: parsed.vendor || "Unknown",
         invoice_number: parsed.invoice_number || "",
-        invoice_date: parsed.invoice_date ? parsed.invoice_date.slice(0, 10) : "",
-        due_date: parsed.due_date ? parsed.due_date.slice(0, 10) : "",
+        invoice_date: parsed.invoice_date || "",
+        due_date: parsed.due_date || "",
         total: Number(parsed.total ?? 0),
-        subtotal: null,
-        tax: null,
-        currency: "USD",
-        line_items: [],
+        subtotal: parsed.subtotal ?? null,
+        tax: parsed.tax ?? null,
+        currency: parsed.currency || "USD",
+        line_items: Array.isArray(parsed.line_items) ? parsed.line_items : [],
         source: { filename: file.name, contentType: "application/pdf", kind: "pdf" },
+        previewUrl: previewDataUrl,
       }
       upsertInvoice(invoice)
       return NextResponse.json<ParseResult>({ ok: true, invoice })
     }
 
-    if (kind === "image") {
-      // Server no longer runs OCR; expect client-side OCR to POST "text"
-      return NextResponse.json<ParseResult>(
-        { ok: false, error: "For images, run OCR in browser and POST as 'text'." },
-        { status: 415 },
-      )
+    // Image path: parse with OpenAI Vision directly on server
+    const base64 = Buffer.from(arrayBuffer).toString("base64")
+    const ext = file.name.toLowerCase().endsWith(".png") ? "png" : "jpeg"
+    const dataUrl = `data:image/${ext};base64,${base64}`
+    const parsed = await parseInvoiceFromImageDataUrl(dataUrl)
+    const invoice: Invoice = {
+      id: `${parsed.vendor || "unknown"}__${parsed.invoice_number || Date.now()}`,
+      vendor: parsed.vendor || "Unknown",
+      invoice_number: parsed.invoice_number || "",
+      invoice_date: parsed.invoice_date || "",
+      due_date: parsed.due_date || "",
+      total: Number(parsed.total ?? 0),
+      subtotal: parsed.subtotal ?? null,
+      tax: parsed.tax ?? null,
+      currency: parsed.currency || "USD",
+      line_items: Array.isArray(parsed.line_items) ? parsed.line_items : [],
+      source: { filename: file.name, contentType: contentType || `image/${ext}`, kind: "image" },
+      previewUrl: previewDataUrl || dataUrl,
     }
-
-    return NextResponse.json<ParseResult>(
-      { ok: false, error: `Unsupported file type. name=${file.name} contentType=${contentType || "n/a"}` },
-      { status: 400 },
-    )
+    upsertInvoice(invoice)
+    return NextResponse.json<ParseResult>({ ok: true, invoice })
   } catch (error: any) {
     return NextResponse.json<ParseResult>({ ok: false, error: error?.message || "Unknown error" }, { status: 500 })
   }

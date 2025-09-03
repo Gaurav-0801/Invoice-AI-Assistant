@@ -13,8 +13,10 @@ export default function UploadCard({ onParsed }: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [seeding, startSeeding] = useTransition()
+  const [seeded, setSeeded] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const router = useRouter()
 
   async function ocrImageToText(file: File): Promise<string> {
@@ -25,6 +27,15 @@ export default function UploadCard({ onParsed }: Props) {
       langPath: "https://tessdata.projectnaptha.com/4.0.0",
     } as any)
     return (data?.text || "").trim()
+  }
+
+  async function fileToDataUrl(file: File) {
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onerror = () => reject(new Error("Preview failed"))
+      reader.onload = () => resolve(String(reader.result))
+      reader.readAsDataURL(file)
+    })
   }
 
   async function handleUpload() {
@@ -40,19 +51,22 @@ export default function UploadCard({ onParsed }: Props) {
       const isImageByName = /\.(png|jpe?g|gif|bmp|webp)$/i.test(file.name || "")
       const isImage = Boolean(isImageByType || isImageByName)
 
+      const previewDataUrl = previewUrl || (await fileToDataUrl(file))
+
       if (isImage) {
         const text = await ocrImageToText(file)
         if (!text) throw new Error("Could not extract text from image. Try a clearer image.")
         const fd = new FormData()
         fd.append("text", text)
         fd.append("filename", file.name)
+        fd.append("previewDataUrl", previewDataUrl)
         const res = await fetch("/api/parse", { method: "POST", body: fd })
         const json = await res.json()
         if (!res.ok || !json.ok) throw new Error(json.error || "Parse failed")
       } else {
-        // PDFs: send the file; server extracts text and parses, no AI
         const fd = new FormData()
         fd.append("file", file)
+        fd.append("previewDataUrl", previewDataUrl)
         const res = await fetch("/api/parse", { method: "POST", body: fd })
         const json = await res.json()
         if (!res.ok || !json.ok) throw new Error(json.error || "Parse failed")
@@ -60,6 +74,7 @@ export default function UploadCard({ onParsed }: Props) {
 
       if (fileRef.current) fileRef.current.value = ""
       setSelectedFile(null)
+      setPreviewUrl(null)
       onParsed?.()
       router.refresh()
     } catch (e: any) {
@@ -72,8 +87,14 @@ export default function UploadCard({ onParsed }: Props) {
   function handleSeed() {
     startSeeding(async () => {
       setError(null)
-      await fetch("/api/seed", { method: "POST" })
+      const res = await fetch("/api/seed", { method: "POST" })
+      if (!res.ok) {
+        setError("Failed to load sample invoices.")
+        return
+      }
       router.refresh()
+      setSeeded(true)
+      setTimeout(() => setSeeded(false), 2500)
     })
   }
 
@@ -81,7 +102,7 @@ export default function UploadCard({ onParsed }: Props) {
     <Card className="border-emerald-200 shadow-sm">
       <CardHeader>
         <CardTitle className="text-balance">Upload an Invoice</CardTitle>
-        <CardDescription>PNG/JPG (client OCR) or PDF (server text). Parsed without AI.</CardDescription>
+        <CardDescription>PNG/JPG (OpenAI Vision) or PDF (text → OpenAI). Parsed with AI.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <Input
@@ -90,24 +111,47 @@ export default function UploadCard({ onParsed }: Props) {
           name="file"
           accept="image/*,.jpg,.jpeg,.png,.pdf"
           multiple={false}
-          onChange={(e) => {
+          onChange={async (e) => {
             const f = e.currentTarget.files?.[0] || null
             setSelectedFile(f)
             if (error) setError(null)
+            if (f) {
+              try {
+                const url = await fileToDataUrl(f)
+                setPreviewUrl(url)
+              } catch {
+                /* ignore */
+              }
+            } else {
+              setPreviewUrl(null)
+            }
           }}
         />
         <div className="flex items-center gap-2">
           <Button type="button" onClick={handleUpload} disabled={loading}>
             {loading ? "Parsing..." : "Parse & Add"}
           </Button>
-          <Button type="button" variant="outline" onClick={handleSeed} disabled={seeding}>
-            {seeding ? "Loading..." : "Load Sample Invoices"}
+          <Button type="button" variant="outline" onClick={handleSeed} disabled={seeding || seeded}>
+            {seeding ? "Loading..." : seeded ? "Loaded ✓" : "Load Sample Invoices"}
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={!previewUrl}
+            onClick={() => {
+              if (previewUrl) {
+                const w = window.open()
+                if (w) w.document.write(`<iframe src="${previewUrl}" style="width:100%;height:100%;border:0"></iframe>`)
+              }
+            }}
+          >
+            Preview selected
           </Button>
         </div>
         {error && <p className={cn("text-sm text-red-600")}>{error}</p>}
         <p className="text-xs text-muted-foreground">
-          Images: on-device OCR (Tesseract.js). PDFs: server text extraction. Q&amp;A uses your OpenAI key but parsing
-          does not.
+          Images: parsed with OpenAI Vision. PDFs: text extracted then structured by OpenAI. Q&amp;A is grounded on your
+          current invoices using your OPENAI_API_KEY.
         </p>
       </CardContent>
     </Card>
