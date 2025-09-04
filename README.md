@@ -37,7 +37,7 @@ Note: “GPT‑5” isn’t publicly available. This app targets OpenAI’s late
 
 ## Environment Variables
 
-In v0 preview:
+In projectpreview:
 - Add OPENAI_API_KEY in Project Settings → Environment Variables. .env files aren’t loaded in preview.
 
 For local development after exporting/downloading:
