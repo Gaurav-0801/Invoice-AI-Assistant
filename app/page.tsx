@@ -1,9 +1,9 @@
 import UploadCard from "@/components/upload-card"
 import InvoiceTable from "@/components/invoice-table"
 import QAChat from "@/components/qa-chat"
-import { getInvoices, seedInvoices } from "@/lib/store" // import seedInvoices
+import { getInvoices, seedInvoices } from "@/lib/store"
 import RecentInvoices from "@/components/recent-invoices"
-import type { Invoice } from "@/types/invoice" // types for seed
+import type { Invoice } from "@/types/invoice"
 
 export const dynamic = "force-dynamic"
 
@@ -36,15 +36,18 @@ export default async function HomePage() {
       source: { filename: "green-invoice.png", contentType: "image/png", kind: "image" },
     },
   ]
-  seedInvoices(samples)
 
-  const invoices = getInvoices()
+  // ✅ Await DB calls
+  await seedInvoices(samples)
+  const invoices = await getInvoices()
 
   return (
     <main className="mx-auto max-w-5xl p-4 md:p-6 space-y-6">
       <header className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl md:text-3xl font-semibold tracking-tight text-balance">Invoice AI Assistant</h1>
+          <h1 className="text-2xl md:text-3xl font-semibold tracking-tight text-balance">
+            Invoice AI Assistant
+          </h1>
           <p className="text-muted-foreground">
             Upload invoices (PDF or image), extract fields, and ask natural-language questions.
           </p>

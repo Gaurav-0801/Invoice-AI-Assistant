@@ -53,6 +53,7 @@ export default function UploadCard({ onParsed }: Props) {
 
       const previewDataUrl = previewUrl || (await fileToDataUrl(file))
 
+      let res
       if (isImage) {
         const text = await ocrImageToText(file)
         if (!text) throw new Error("Could not extract text from image. Try a clearer image.")
@@ -60,21 +61,23 @@ export default function UploadCard({ onParsed }: Props) {
         fd.append("text", text)
         fd.append("filename", file.name)
         fd.append("previewDataUrl", previewDataUrl)
-        const res = await fetch("/api/parse", { method: "POST", body: fd })
-        const json = await res.json()
-        if (!res.ok || !json.ok) throw new Error(json.error || "Parse failed")
+        res = await fetch("/api/parse", { method: "POST", body: fd })
       } else {
         const fd = new FormData()
         fd.append("file", file)
         fd.append("previewDataUrl", previewDataUrl)
-        const res = await fetch("/api/parse", { method: "POST", body: fd })
-        const json = await res.json()
-        if (!res.ok || !json.ok) throw new Error(json.error || "Parse failed")
+        res = await fetch("/api/parse", { method: "POST", body: fd })
       }
 
+      const json = await res.json()
+      if (!res.ok || !json.ok) throw new Error(json.error || "Parse failed")
+
+      // ✅ Reset file input and preview
       if (fileRef.current) fileRef.current.value = ""
       setSelectedFile(null)
       setPreviewUrl(null)
+
+      // ✅ Call callback + refresh page
       onParsed?.()
       router.refresh()
     } catch (e: any) {
@@ -102,7 +105,7 @@ export default function UploadCard({ onParsed }: Props) {
     <Card className="border-emerald-200 shadow-sm">
       <CardHeader>
         <CardTitle className="text-balance">Upload an Invoice</CardTitle>
-        <CardDescription>PNG/JPG (OpenAI Vision) or PDF (text → OpenAI). Parsed with AI.</CardDescription>
+        <CardDescription>PNG/JPG (OCR + AI) or PDF (text → AI). Parsed and stored in your DB.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <Input
@@ -134,24 +137,11 @@ export default function UploadCard({ onParsed }: Props) {
           <Button type="button" variant="outline" onClick={handleSeed} disabled={seeding || seeded}>
             {seeding ? "Loading..." : seeded ? "Loaded ✓" : "Load Sample Invoices"}
           </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={!previewUrl}
-            onClick={() => {
-              if (previewUrl) {
-                const w = window.open()
-                if (w) w.document.write(`<iframe src="${previewUrl}" style="width:100%;height:100%;border:0"></iframe>`)
-              }
-            }}
-          >
-            Preview selected
-          </Button>
         </div>
         {error && <p className={cn("text-sm text-red-600")}>{error}</p>}
         <p className="text-xs text-muted-foreground">
-          Images: parsed with OpenAI Vision. PDFs: text extracted then structured by OpenAI. Q&amp;A is grounded on your
-          current invoices using your OPENAI_API_KEY.
+          Images: parsed with OCR + AI. PDFs: text extracted then structured by AI. All invoices are saved to NeonDB and
+          show up in your dashboard immediately.
         </p>
       </CardContent>
     </Card>

@@ -1,10 +1,9 @@
-// Parse endpoint: Use OpenAI Vision for images; extract text from PDFs with pdfjs-dist,
-// then use OpenAI to structure fields into an Invoice.
-
+// app/api/parse/route.ts
 import { type NextRequest, NextResponse } from "next/server"
 import type { Invoice, ParseResult } from "@/types/invoice"
 import { upsertInvoice } from "@/lib/store"
 import { parseInvoiceFromImageDataUrl, parseInvoiceFromText } from "@/lib/openai"
+import { revalidatePath } from "next/cache"
 
 async function pdfToText(buffer: ArrayBuffer): Promise<string> {
   const pdfjs = await import("pdfjs-dist")
@@ -30,11 +29,10 @@ export async function POST(req: NextRequest) {
     const form = await req.formData()
     const previewDataUrl = form.get("previewDataUrl")?.toString()
 
-    // Allow direct text ingestion (from client OCR) - keep as supported path.
+    // Case 1: direct OCR text
     const textField = form.get("text")
     const filenameField = form.get("filename")?.toString()
     if (typeof textField === "string" && textField.trim().length > 0) {
-      // Use LLM structuring for provided text
       const parsed = await parseInvoiceFromText(textField)
       const invoice: Invoice = {
         id: `${parsed.vendor || "unknown"}__${parsed.invoice_number || Date.now()}`,
@@ -46,17 +44,29 @@ export async function POST(req: NextRequest) {
         subtotal: parsed.subtotal ?? null,
         tax: parsed.tax ?? null,
         currency: parsed.currency || "USD",
-        line_items: Array.isArray(parsed.line_items) ? parsed.line_items : [],
+        line_items: Array.isArray(parsed.line_items)
+          ? parsed.line_items.map((li) => ({
+              description: li.description ?? "",
+              qty: li.qty ?? null,
+              unit_price: li.unit_price ?? null,
+              amount: li.amount ?? null,
+            }))
+          : [],
         source: { filename: filenameField, contentType: "text/plain", kind: "text" },
         previewUrl: previewDataUrl,
       }
-      upsertInvoice(invoice)
+      await upsertInvoice(invoice)
+      revalidatePath("/") // ✅ refresh cache
       return NextResponse.json<ParseResult>({ ok: true, invoice })
     }
 
+    // Case 2: file upload
     const file = form.get("file") as File | null
     if (!file) {
-      return NextResponse.json<ParseResult>({ ok: false, error: "No file or text provided." }, { status: 400 })
+      return NextResponse.json<ParseResult>(
+        { ok: false, error: "No file or text provided." },
+        { status: 400 }
+      )
     }
 
     const arrayBuffer = await file.arrayBuffer()
@@ -66,13 +76,21 @@ export async function POST(req: NextRequest) {
     const ct = (contentType || "").toLowerCase()
     const isPdf =
       ct.includes("pdf") ||
-      (head.length >= 4 && head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46) ||
+      (head.length >= 4 &&
+        head[0] === 0x25 &&
+        head[1] === 0x50 &&
+        head[2] === 0x44 &&
+        head[3] === 0x46) ||
       file.name.toLowerCase().endsWith(".pdf")
 
+    // Case 2a: PDF
     if (isPdf) {
       const text = await pdfToText(arrayBuffer)
       if (!text.trim()) {
-        return NextResponse.json<ParseResult>({ ok: false, error: "Could not extract text from PDF." }, { status: 400 })
+        return NextResponse.json<ParseResult>(
+          { ok: false, error: "Could not extract text from PDF." },
+          { status: 400 }
+        )
       }
       const parsed = await parseInvoiceFromText(text)
       const invoice: Invoice = {
@@ -85,15 +103,23 @@ export async function POST(req: NextRequest) {
         subtotal: parsed.subtotal ?? null,
         tax: parsed.tax ?? null,
         currency: parsed.currency || "USD",
-        line_items: Array.isArray(parsed.line_items) ? parsed.line_items : [],
+        line_items: Array.isArray(parsed.line_items)
+          ? parsed.line_items.map((li) => ({
+              description: li.description ?? "",
+              qty: li.qty ?? null,
+              unit_price: li.unit_price ?? null,
+              amount: li.amount ?? null,
+            }))
+          : [],
         source: { filename: file.name, contentType: "application/pdf", kind: "pdf" },
         previewUrl: previewDataUrl,
       }
-      upsertInvoice(invoice)
+      await upsertInvoice(invoice)
+      revalidatePath("/") // ✅ refresh cache
       return NextResponse.json<ParseResult>({ ok: true, invoice })
     }
 
-    // Image path: parse with OpenAI Vision directly on server
+    // Case 2b: Image
     const base64 = Buffer.from(arrayBuffer).toString("base64")
     const ext = file.name.toLowerCase().endsWith(".png") ? "png" : "jpeg"
     const dataUrl = `data:image/${ext};base64,${base64}`
@@ -108,13 +134,24 @@ export async function POST(req: NextRequest) {
       subtotal: parsed.subtotal ?? null,
       tax: parsed.tax ?? null,
       currency: parsed.currency || "USD",
-      line_items: Array.isArray(parsed.line_items) ? parsed.line_items : [],
+      line_items: Array.isArray(parsed.line_items)
+        ? parsed.line_items.map((li) => ({
+            description: li.description ?? "",
+            qty: li.qty ?? null,
+            unit_price: li.unit_price ?? null,
+            amount: li.amount ?? null,
+          }))
+        : [],
       source: { filename: file.name, contentType: contentType || `image/${ext}`, kind: "image" },
       previewUrl: previewDataUrl || dataUrl,
     }
-    upsertInvoice(invoice)
+    await upsertInvoice(invoice)
+    revalidatePath("/") // ✅ refresh cache
     return NextResponse.json<ParseResult>({ ok: true, invoice })
   } catch (error: any) {
-    return NextResponse.json<ParseResult>({ ok: false, error: error?.message || "Unknown error" }, { status: 500 })
+    return NextResponse.json<ParseResult>(
+      { ok: false, error: error?.message || "Unknown error" },
+      { status: 500 }
+    )
   }
 }
