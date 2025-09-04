@@ -11,12 +11,12 @@ export type Invoice = {
   id: string
   vendor: string
   invoice_number: string
-  invoice_date: string // YYYY-MM-DD
-  due_date: string // YYYY-MM-DD
+  invoice_date: string | null // allow null
+  due_date: string | null     // allow null
   total: number
   subtotal?: number | null
   tax?: number | null
-  currency?: string // default USD
+  currency?: string
   line_items?: LineItem[]
   source?: {
     filename?: string
@@ -25,6 +25,7 @@ export type Invoice = {
   }
   previewUrl?: string
 }
+
 
 export type ParseResult = { ok: true; invoice: Invoice } | { ok: false; error: string }
 

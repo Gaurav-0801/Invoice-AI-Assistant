@@ -7,7 +7,7 @@ import { revalidatePath } from "next/cache"
 
 async function pdfToText(buffer: ArrayBuffer): Promise<string> {
   const pdfjs = await import("pdfjs-dist")
-  // @ts-ignore
+  // @ts-ignore - disable worker in this environment
   const loadingTask = (pdfjs as any).getDocument({ data: buffer })
   const pdf = await loadingTask.promise
   let text = ""
@@ -24,26 +24,22 @@ async function pdfToText(buffer: ArrayBuffer): Promise<string> {
   return text
 }
 
-function sanitizeDate(date?: string | null): string {
-  return date?.trim() || "" // always return a string
-}
-
 export async function POST(req: NextRequest) {
   try {
     const form = await req.formData()
     const previewDataUrl = form.get("previewDataUrl")?.toString()
-    const filenameField = form.get("filename")?.toString()
-    const textField = form.get("text")
 
     // Case 1: direct OCR text
+    const textField = form.get("text")
+    const filenameField = form.get("filename")?.toString()
     if (typeof textField === "string" && textField.trim().length > 0) {
       const parsed = await parseInvoiceFromText(textField)
       const invoice: Invoice = {
         id: `${parsed.vendor || "unknown"}__${parsed.invoice_number || Date.now()}`,
         vendor: parsed.vendor || "Unknown",
         invoice_number: parsed.invoice_number || "",
-        invoice_date: sanitizeDate(parsed.invoice_date),
-        due_date: sanitizeDate(parsed.due_date),
+        invoice_date: parsed.invoice_date || "",
+        due_date: parsed.due_date || "",
         total: Number(parsed.total ?? 0),
         subtotal: parsed.subtotal ?? null,
         tax: parsed.tax ?? null,
@@ -60,38 +56,49 @@ export async function POST(req: NextRequest) {
         previewUrl: previewDataUrl,
       }
       await upsertInvoice(invoice)
-      revalidatePath("/")
+      revalidatePath("/") // ✅ refresh cache
       return NextResponse.json<ParseResult>({ ok: true, invoice })
     }
 
     // Case 2: file upload
     const file = form.get("file") as File | null
     if (!file) {
-      return NextResponse.json<ParseResult>({ ok: false, error: "No file or text provided." }, { status: 400 })
+      return NextResponse.json<ParseResult>(
+        { ok: false, error: "No file or text provided." },
+        { status: 400 }
+      )
     }
 
     const arrayBuffer = await file.arrayBuffer()
     const contentType = file.type || ""
     const head = new Uint8Array(arrayBuffer.slice(0, 8))
-    const ct = contentType.toLowerCase()
+
+    const ct = (contentType || "").toLowerCase()
     const isPdf =
       ct.includes("pdf") ||
-      (head.length >= 4 && head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46) ||
+      (head.length >= 4 &&
+        head[0] === 0x25 &&
+        head[1] === 0x50 &&
+        head[2] === 0x44 &&
+        head[3] === 0x46) ||
       file.name.toLowerCase().endsWith(".pdf")
 
     // Case 2a: PDF
     if (isPdf) {
       const text = await pdfToText(arrayBuffer)
       if (!text.trim()) {
-        return NextResponse.json<ParseResult>({ ok: false, error: "Could not extract text from PDF." }, { status: 400 })
+        return NextResponse.json<ParseResult>(
+          { ok: false, error: "Could not extract text from PDF." },
+          { status: 400 }
+        )
       }
       const parsed = await parseInvoiceFromText(text)
       const invoice: Invoice = {
         id: `${parsed.vendor || "unknown"}__${parsed.invoice_number || Date.now()}`,
         vendor: parsed.vendor || "Unknown",
         invoice_number: parsed.invoice_number || "",
-        invoice_date: sanitizeDate(parsed.invoice_date),
-        due_date: sanitizeDate(parsed.due_date),
+        invoice_date: parsed.invoice_date || "",
+        due_date: parsed.due_date || "",
         total: Number(parsed.total ?? 0),
         subtotal: parsed.subtotal ?? null,
         tax: parsed.tax ?? null,
@@ -108,7 +115,7 @@ export async function POST(req: NextRequest) {
         previewUrl: previewDataUrl,
       }
       await upsertInvoice(invoice)
-      revalidatePath("/")
+      revalidatePath("/") // ✅ refresh cache
       return NextResponse.json<ParseResult>({ ok: true, invoice })
     }
 
@@ -121,8 +128,8 @@ export async function POST(req: NextRequest) {
       id: `${parsed.vendor || "unknown"}__${parsed.invoice_number || Date.now()}`,
       vendor: parsed.vendor || "Unknown",
       invoice_number: parsed.invoice_number || "",
-      invoice_date: sanitizeDate(parsed.invoice_date),
-      due_date: sanitizeDate(parsed.due_date),
+      invoice_date: parsed.invoice_date || "",
+      due_date: parsed.due_date || "",
       total: Number(parsed.total ?? 0),
       subtotal: parsed.subtotal ?? null,
       tax: parsed.tax ?? null,
@@ -139,9 +146,12 @@ export async function POST(req: NextRequest) {
       previewUrl: previewDataUrl || dataUrl,
     }
     await upsertInvoice(invoice)
-    revalidatePath("/")
+    revalidatePath("/") // ✅ refresh cache
     return NextResponse.json<ParseResult>({ ok: true, invoice })
   } catch (error: any) {
-    return NextResponse.json<ParseResult>({ ok: false, error: error?.message || "Unknown error" }, { status: 500 })
+    return NextResponse.json<ParseResult>(
+      { ok: false, error: error?.message || "Unknown error" },
+      { status: 500 }
+    )
   }
 }
