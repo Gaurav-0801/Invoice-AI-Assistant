@@ -83,3 +83,9 @@ export async function seedInvoices(invoices: Invoice[]) {
     await upsertInvoice(inv)
   }
 }
+
+export async function deleteInvoice(id: string) {
+  await sql`
+    DELETE FROM invoices WHERE id = ${id}
+  `
+}

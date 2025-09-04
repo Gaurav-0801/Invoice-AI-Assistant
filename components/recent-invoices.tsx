@@ -6,7 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import type { Invoice } from "@/types/invoice"
 import { cn } from "@/lib/utils"
 import { FileText, Calendar, DollarSign } from "lucide-react"
-import { formatDateUS } from "@/lib/date" // import deterministic formatter
+import { formatDateUS } from "@/lib/date" 
 import { Button } from "@/components/ui/button"
 
 type Props = {
